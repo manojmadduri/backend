@@ -1,0 +1,6 @@
+sentence-transformers
+transformers
+nltk
+dateparser
+numpy
+dateparser
