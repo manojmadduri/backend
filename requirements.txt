@@ -4,4 +4,5 @@ nltk==3.8.1
 dateparser
 numpy
 dateparser
+requests==2.31.0
 
