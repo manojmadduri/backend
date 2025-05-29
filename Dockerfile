@@ -8,14 +8,17 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 # Install Node dependencies
 RUN npm install
+# Create Python virtual environment
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 # Copy requirements.txt and install Python dependencies
 COPY requirements.txt ./
-RUN pip3 install --no-cache-dir --upgrade pip
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the backend code
 COPY . ./
 # Set environment variables
-ENV PORT=4000 UPLOAD_DIR=uploads PYTHON_PATH=python3
+ENV PORT=4000 UPLOAD_DIR=uploads PYTHON_PATH=/opt/venv/bin/python3
 # Expose the port
 EXPOSE 4000
 # Start the Node server
