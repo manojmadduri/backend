@@ -1,100 +1,106 @@
-// backend/server.js
 require('dotenv').config();
-
-const express    = require('express');
-const multer     = require('multer');
-const cors       = require('cors');
-const { spawn }  = require('child_process');
-const path       = require('path');
-const fs         = require('fs');
+const express = require('express');
+const multer = require('multer');
+const cors = require('cors');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 
-// ─── 1) CORS ────────────────────────────────────────────────────────────────────
-// Allow all origins for now (or lock down to your Vercel domain)
-app.use(cors());
-app.options('*', cors()); // preflight
+// ✅ TEMP: Allow all origins during debugging
+// app.use(cors()); // You can later restrict to your Vercel domain
+app.use(cors({
+  origin: 'https://smart-data-processor.vercel.app',
+  methods: ['GET', 'POST']
+}));
 
-// ─── 2) Health Endpoint ─────────────────────────────────────────────────────────
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
-
-// ─── 3) Ensure upload directory exists ─────────────────────────────────────────
+// 1) Ensure upload directory exists
 const uploadDir = process.env.UPLOAD_DIR || 'uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-// ─── 4) Multer config ──────────────────────────────────────────────────────────
+// 2) Multer config
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename:   (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
 
-// ─── 5) POST /api/upload ───────────────────────────────────────────────────────
+// 3) POST /api/upload
 app.post('/api/upload', upload.array('files'), (req, res) => {
-  const dataPath     = path.join(uploadDir, 'data.txt');
-  const smartPath    = path.join(uploadDir, 'memories.jsonl');
-  const finetunePath = path.join(uploadDir, 'finetune_data.jsonl');
-
-  // Combine uploaded files
+  console.log('📥 Received upload request...');
+  const dataPath = path.join(uploadDir, 'data.txt');
   const out = fs.createWriteStream(dataPath);
   req.files.forEach(f => out.write(fs.readFileSync(f.path, 'utf-8') + '\n\n'));
   out.end();
 
   const pythonCmd = process.env.PYTHON_PATH || 'python3';
+  const smartPath = path.join(uploadDir, 'memories.jsonl');
+  const finetunePath = path.join(uploadDir, 'finetune_data.jsonl');
 
-  // 5a) generate_jsonl_smart.py
-  let genErr = '';
+  console.log('🟡 Starting: generate_jsonl_smart.py...');
+
   const gen = spawn(
     pythonCmd,
     ['scripts/generate_jsonl_smart.py', '--input', dataPath, '--output', smartPath],
     { cwd: __dirname }
   );
-  gen.stderr.on('data', chunk => genErr += chunk.toString());
+
+  let genErr = '';
+  gen.stderr.on('data', c => {
+    const msg = c.toString();
+    genErr += msg;
+    console.error('[generate_jsonl_smart] stderr:', msg);
+  });
 
   gen.on('close', code => {
+    console.log(`🟢 Finished: generate_jsonl_smart.py with code ${code}`);
+
     if (code !== 0) {
-      console.error('generate_jsonl_smart error:', genErr);
-      return res.status(500).send(`Error generating smart JSONL:\n${genErr}`);
+      return res.status(500).send(`❌ Error generating JSONL smart:\n${genErr}`);
     }
 
-    // 5b) prepare_finetune_dataset.py
-    let prepErr = '';
+    console.log('🟡 Starting: prepare_finetune_dataset.py...');
+
     const prep = spawn(
       pythonCmd,
       ['scripts/prepare_finetune_dataset.py', '--input', smartPath, '--output', finetunePath],
       { cwd: __dirname }
     );
-    prep.stderr.on('data', chunk => prepErr += chunk.toString());
+
+    let prepErr = '';
+    prep.stderr.on('data', c => {
+      const msg = c.toString();
+      prepErr += msg;
+      console.error('[prepare_finetune_dataset] stderr:', msg);
+    });
 
     prep.on('close', code2 => {
+      console.log(`🟢 Finished: prepare_finetune_dataset.py with code ${code2}`);
+
       if (code2 !== 0) {
-        console.error('prepare_finetune_dataset error:', prepErr);
-        return res.status(500).send(`Error preparing fine-tune JSONL:\n${prepErr}`);
+        return res.status(500).send(`❌ Error preparing fine-tune dataset:\n${prepErr}`);
       }
 
-      // 5c) Success
+      console.log('✅ Sending JSON response to client.');
       res.json({
-        smart:    `/api/download/${path.basename(smartPath)}`,
+        smart: `/api/download/${path.basename(smartPath)}`,
         finetune: `/api/download/${path.basename(finetunePath)}`
       });
     });
   });
 });
 
-// ─── 6) GET /api/download/:filename ─────────────────────────────────────────────
+// 4) GET /api/download/:filename
 app.get('/api/download/:filename', (req, res) => {
   const file = path.join(uploadDir, req.params.filename);
   if (fs.existsSync(file)) {
-    res.download(file);
-  } else {
-    res.status(404).send(`File not found: ${req.params.filename}`);
+    console.log(`📤 Download requested: ${req.params.filename}`);
+    return res.download(file);
   }
+  res.status(404).send(`❌ File not found: ${req.params.filename}`);
 });
 
-// ─── 7) Start the server ────────────────────────────────────────────────────────
+// 5) Start server
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`Backend listening on port ${port}`));
+app.listen(port, () => console.log(`🚀 Backend listening on port ${port}`));
