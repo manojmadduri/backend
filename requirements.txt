@@ -1,6 +1,7 @@
 sentence-transformers
 transformers
-nltk
+nltk==3.8.1
 dateparser
 numpy
 dateparser
+
